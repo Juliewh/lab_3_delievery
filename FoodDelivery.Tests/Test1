@@ -1,0 +1,164 @@
+using Microsoft.VisualStudio.TestTools.UnitTesting;
+using FoodDelivery.Builders;
+using FoodDelivery.Factories;
+using FoodDelivery.Models;
+using FoodDelivery.Services;
+using FoodDelivery.Strategy;
+using FoodDelivery.State;
+using FoodDelivery.Observer;
+using System;
+using System.Linq;
+
+namespace FoodDelivery.Tests
+{
+    [TestClass]
+    public class FoodDeliveryTests
+    {
+        [TestMethod]
+        public void Builder_CreatesOrderSuccessfully()
+        {
+            var menuFactory = new MenuFactory();
+            var pizza = menuFactory.CreateMenuItem("Pizza", 10);
+
+            var order = new OrderBuilder()
+                .WithCustomer("Ivan")
+                .WithAddress("Main St 15")
+                .AddItem(pizza, 2)
+                .Build();
+
+            Assert.AreEqual("Ivan", order.CustomerName);
+            Assert.AreEqual("Main St 15", order.Address);
+            Assert.AreEqual(1, order.Items.Count);
+            Assert.AreEqual(2, order.Items.First().Quantity);
+        }
+
+        [TestMethod]
+        [ExpectedException(typeof(ArgumentException))]
+        public void Builder_Throws_WhenNoCustomer()
+        {
+            new OrderBuilder()
+                .WithAddress("AAA")
+                .Build();
+        }
+
+        [TestMethod]
+        public void BasePriceStrategy_AddsTax()
+        {
+            var strat = new BasePriceStrategy();
+            decimal result = strat.Calculate(100m);
+
+            Assert.AreEqual(110m, result);
+        }
+
+        [TestMethod]
+        public void DiscountDecorator_AppliesDiscount()
+        {
+            IPriceStrategy strat = new BasePriceStrategy();
+            strat = new DiscountDecorator(strat, 0.1m); 
+
+            decimal result = strat.Calculate(100m);
+
+            Assert.AreEqual(99m, result);
+        }
+
+        [TestMethod]
+        public void Order_State_TransitionsCorrectly()
+        {
+            var pizza = new MenuItem("Pizza", 10);
+            var order = new OrderBuilder()
+                .WithCustomer("Ivan")
+                .WithAddress("Street 1")
+                .AddItem(pizza)
+                .Build();
+
+            Assert.AreEqual(nameof(PreparingState), order.StateName);
+
+            order.AdvanceState();
+            Assert.AreEqual(nameof(DeliveringState), order.StateName);
+
+            order.AdvanceState();
+            Assert.AreEqual(nameof(CompletedState), order.StateName);
+        }
+
+        [TestMethod]
+        public void Repository_AddsAndGetsOrder()
+        {
+            var repo = new InMemoryOrderRepository();
+            var order = new OrderBuilder()
+                .WithCustomer("Petr")
+                .WithAddress("Test st")
+                .AddItem(new MenuItem("Tea", 5))
+                .Build();
+
+            repo.Add(order);
+
+            var loaded = repo.GetById(order.Id);
+
+            Assert.IsNotNull(loaded);
+            Assert.AreEqual(order.Id, loaded.Id);
+        }
+
+        [TestMethod]
+        public void Observer_ReceivesNotifications()
+        {
+            string lastMessage = "";
+
+            var observer = new TestObserver(m => lastMessage = m);
+
+            var order = new OrderBuilder()
+                .WithCustomer("Test")
+                .WithAddress("Obs")
+                .AddItem(new MenuItem("Soup", 7))
+                .Build();
+
+            order.Attach(observer);
+            order.NotifyObservers("Hello");
+
+            Assert.AreEqual("Hello", lastMessage);
+        }
+
+        [TestMethod]
+        public void PlaceOrderCommand_AddsOrderToRepo()
+        {
+            var repo = new InMemoryOrderRepository();
+
+            var order = new OrderBuilder()
+                .WithCustomer("CmdUser")
+                .WithAddress("AAA")
+                .AddItem(new MenuItem("Coffee", 3))
+                .Build();
+
+            var cmd = new FoodDelivery.Commands.PlaceOrderCommand(order, repo);
+            cmd.Execute();
+
+            Assert.IsNotNull(repo.GetById(order.Id));
+        }
+
+        [TestMethod]
+        public void CancelOrderCommand_SetsStateToCompleted()
+        {
+            var repo = new InMemoryOrderRepository();
+
+            var order = new OrderBuilder()
+                .WithCustomer("CmdUser")
+                .WithAddress("AAA")
+                .AddItem(new MenuItem("Coffee", 3))
+                .Build();
+
+            repo.Add(order);
+
+            var cmd = new FoodDelivery.Commands.CancelOrderCommand(order.Id, repo);
+            cmd.Execute();
+
+            Assert.AreEqual(nameof(CompletedState), repo.GetById(order.Id).StateName);
+        }
+    }
+
+    public class TestObserver : IOrderObserver
+    {
+        private readonly Action<string> _onUpdate;
+        public TestObserver(Action<string> onUpdate) => _onUpdate = onUpdate;
+
+        public void OnOrderUpdated(string msg) => _onUpdate(msg);
+    }
+}
