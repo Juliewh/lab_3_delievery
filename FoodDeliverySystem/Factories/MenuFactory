@@ -1,0 +1,12 @@
+using FoodDelivery.Models;
+
+namespace FoodDelivery.Factories
+{
+    public class MenuFactory : IMenuFactory
+    {
+        public MenuItem CreateMenuItem(string name, decimal price)
+        {
+            return new MenuItem(name, price);
+        }
+    }
+}
